@@ -18,28 +18,42 @@ function initChannelAnalyzer() {
     const timezoneFilter = document.getElementById('analyzer-timezoneFilter');
     const toggleKeywordsButton = document.getElementById('analyzer-toggleKeywordsButton');
     const copySuccessMessage = document.getElementById('analyzer-copySuccess');
+    
+    // Nút Phân Tích (Sửa lại)
     const analysisButtonContainer = document.getElementById('analyzer-analysisButtonContainer');
-    const analysisButton = document.getElementById('analyzer-analysisButton');
+    const analysisButton = document.getElementById('analyzer-analysisButton'); // Nút phân tích KÊNH
     const analysisResults = document.getElementById('analyzer-analysisResults');
     const analysisTitle = document.getElementById('analyzer-analysisTitle');
+    const hideAnalysisButton = document.getElementById('analyzer-hideAnalysisButton'); // Nút ẩn mới
+
+    // --- BIẾN & DOM MỚI CHO "GIỎ VIDEO" ---
+    const savedCountSpan = document.getElementById('analyzer-saved-count'); // Bây giờ là span bên trong nút
+    const showSavedListBtn = document.getElementById('analyzer-show-saved-list'); // Nút mới
+    const savedListModal = document.getElementById('analyzer-saved-list-modal');
+    const modalCloseBtn = document.getElementById('analyzer-modal-close-btn');
+    const modalBody = document.getElementById('analyzer-modal-body');
+    const modalTitle = document.getElementById('analyzer-modal-title');
+    const modalClearBtn = document.getElementById('analyzer-modal-clear-btn');
+    const modalAnalyzeBtn = document.getElementById('analyzer-modal-analyze-btn'); // Nút phân tích GIỎ HÀNG
+    // ------------------------------------
 
     // Kiểm tra xem có ở đúng trang không
     if (!searchButton) return;
 
     // Biến toàn cục (chỉ cho công cụ này)
-    let allFetchedVideos = [];
+    let allFetchedVideos = []; // Lưu kết quả TÌM KIẾM hiện tại
+    let savedVideos = [];      // Lưu GIỎ HÀNG
     let showKeywords = false;
     let copyTimeout = null;
     let chartInstances = {}; // Để lưu trữ các biểu đồ
-    let isAnalysisActive = false;
-    let activeHourFilter = null; // Sẽ lưu trữ "17:00 - 18:00"
-    let activeDayFilter = null;  // Sẽ lưu trữ "Chủ nhật"
+    let activeHourFilter = null; 
+    let activeDayFilter = null;  
 
-    // Mảng màu
+    // Mảng màu (Sử dụng CSS Variables đã định nghĩa trong <style>)
     const CHART_COLORS = {
-        blue: 'rgba(59, 130, 246, 0.7)',
-        green: 'rgba(16, 185, 129, 0.7)',
-        yellow: 'rgba(245, 159, 11, 0.7)',
+        blue: 'rgba(24, 144, 255, 0.7)', // var(--primary-blue-light)
+        green: 'rgba(16, 185, 129, 0.7)', // Màu xanh lá (giữ nguyên cho biểu đồ này)
+        yellow: 'rgba(245, 159, 11, 0.7)', // Màu vàng (giữ nguyên cho biểu đồ này)
     };
     
     const WEEKDAY_NAMES = [ 'Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7' ];
@@ -66,16 +80,59 @@ function initChannelAnalyzer() {
     timezoneFilter.addEventListener('change', updateDashboard);
 
     toggleKeywordsButton.addEventListener('click', handleToggleKeywords);
-    analysisButton.addEventListener('click', toggleAnalysis); 
-    urlInput.addEventListener('keypress', (e) => e.key === 'Enter' && handleSearch());
-    resultsContainer.addEventListener('click', handleCopyClick);
     
+    analysisButton.addEventListener('click', handleAnalyzeChannel); // Phân tích KÊNH
+    hideAnalysisButton.addEventListener('click', hideAnalysis); // Nút ẩn
+    
+    urlInput.addEventListener('keypress', (e) => e.key === 'Enter' && handleSearch());
+    
+    resultsContainer.addEventListener('click', handleCardClick); // Uỷ quyền sự kiện
+    showSavedListBtn.addEventListener('click', showSavedListModal); // Nút này giờ chỉ mở modal
+    modalCloseBtn.addEventListener('click', hideSavedListModal);
+    modalClearBtn.addEventListener('click', handleClearSavedList);
+    modalAnalyzeBtn.addEventListener('click', handleAnalyzeSavedList); // Nút trong modal
+    modalBody.addEventListener('click', handleRemoveFromSaved); // Uỷ quyền sự kiện
+    
+    savedListModal.addEventListener('click', (e) => {
+        if (e.target === savedListModal) {
+            hideSavedListModal();
+        }
+    });
+
+    /**
+     * [HÀM MỚI] Quản lý trạng thái active của 2 nút tab
+     * @param {'channel' | 'cart' | 'none'} activeState 
+     */
+    function setActiveTab(activeState) {
+        // Các lớp (class) cho trạng thái KHÔNG HOẠT ĐỘNG (xám)
+        const inactiveClasses = ['bg-gray-200', 'text-gray-700', 'hover:bg-gray-300'];
+        // Code ĐÃ ĐIỀU CHỈNH trong channelAnalyzer.js
+// Sử dụng các lớp tiện ích CSS đã được định nghĩa trong style.css
+const activeClasses = ['bg-primary-dark', 'text-white', 'hover:bg-primary-dark'];
+
+        // 1. Nút Phân Tích Kênh
+        if (analysisButton) {
+            analysisButton.classList.remove(...activeClasses, ...inactiveClasses);
+            if (activeState === 'channel') {
+                analysisButton.classList.add(...activeClasses);
+            } else {
+                analysisButton.classList.add(...inactiveClasses);
+            }
+        }
+        
+        // 2. Nút Giỏ Hàng
+        if (showSavedListBtn) {
+            showSavedListBtn.classList.remove(...activeClasses, ...inactiveClasses);
+            if (activeState === 'cart') {
+                showSavedListBtn.classList.add(...activeClasses);
+            } else {
+                showSavedListBtn.classList.add(...inactiveClasses);
+            }
+        }
+    }
     
     // === CÁC HÀM CHÍNH ===
 
-    /**
-     * Hàm Cập nhật Đồng bộ (Logic Cross-filter)
-     */
     function updateDashboard() {
         const year = parseInt(yearFilter.value, 10);
         
@@ -85,17 +142,12 @@ function initChannelAnalyzer() {
         // 2. Tạo các danh sách video phụ để tính toán biểu đồ
         const selectedTz = (timezoneFilter.value === 'local') ? undefined : timezoneFilter.value;
 
-        // Danh sách cho biểu đồ GIỜ (bị ảnh hưởng bởi lọc Ngày)
         const videosForHourChart = mainFilteredVideos.filter(v => 
             !activeDayFilter || videoMatchesDay(v, activeDayFilter, selectedTz)
         );
-        
-        // Danh sách cho biểu đồ NGÀY (bị ảnh hưởng bởi lọc Giờ)
         const videosForDayChart = mainFilteredVideos.filter(v => 
             !activeHourFilter || videoMatchesHour(v, activeHourFilter, selectedTz)
         );
-        
-        // Danh sách cho biểu đồ NHỊP ĐỘ và DANH SÁCH VIDEO (bị ảnh hưởng bởi cả 2)
         const videosForListAndGap = mainFilteredVideos.filter(v => 
             (!activeDayFilter || videoMatchesDay(v, activeDayFilter, selectedTz)) &&
             (!activeHourFilter || videoMatchesHour(v, activeHourFilter, selectedTz))
@@ -105,11 +157,17 @@ function initChannelAnalyzer() {
         renderVideoList(videosForListAndGap);
 
         // 4. Render lại biểu đồ (nếu đang bật)
-        if (isAnalysisActive) {
-            runAnalysis(videosForHourChart, videosForDayChart, videosForListAndGap);
+        if (!analysisResults.classList.contains('hidden')) {
+            // Kiểm tra xem đang phân tích KÊNH hay GIỎ HÀNG
+            if (analysisTitle.dataset.isSavedListAnalysis === 'true') {
+                // Nếu đang phân tích giỏ hàng, không làm gì cả (vì bộ lọc không ảnh hưởng)
+            } else {
+                // Nếu đang phân tích kênh, cập nhật theo bộ lọc
+                runAnalysis(videosForHourChart, videosForDayChart, videosForListAndGap, false);
+            }
         }
         
-        // 5. Cập nhật số đếm của bộ lọc LOẠI VIDEO (logic 1 chiều)
+        // 5. Cập nhật số đếm của bộ lọc LOẠI VIDEO
         let videosForTypeCount = [...allFetchedVideos];
         if (year !== 0) {
             videosForTypeCount = videosForTypeCount.filter(v => v.publishedDate.getFullYear() === year);
@@ -117,50 +175,41 @@ function initChannelAnalyzer() {
         updateTypeFilterCounts(videosForTypeCount); 
     }
 
-    // Các hàm helper mới để lấy key và kiểm tra
+    // --- CÁC HÀM LOGIC (KHÔNG THAY ĐỔI) ---
     function getHourKey(date, tz) {
         let hourString = new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: tz }).format(date);
         let hour = parseInt(hourString, 10);
         if (hour === 24) hour = 0;
         return HOUR_LABELS[hour];
     }
-
     function getDayKey(date, tz) {
         const weekdayName = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: tz }).format(date);
         const dayIndex = EN_WEEKDAY_NAMES.indexOf(weekdayName);
         return (dayIndex !== -1) ? WEEKDAY_NAMES[dayIndex] : null;
     }
-
     function videoMatchesHour(video, hourKey, tz) {
         return getHourKey(video.publishedDate, tz) === hourKey;
     }
-
     function videoMatchesDay(video, dayKey, tz) {
         return getDayKey(video.publishedDate, tz) === dayKey;
     }
-    
-    // Các hàm mới để SET bộ lọc phụ
     function setHourFilter(hourKey) {
         activeHourFilter = hourKey;
         updateDashboard();
     }
-    
     function setDayFilter(dayKey) {
         activeDayFilter = dayKey;
         updateDashboard();
     }
-    // Cung cấp các hàm này cho global scope (để onclick trong HTML có thể gọi)
     window.setHourFilter = setHourFilter;
     window.setDayFilter = setDayFilter;
-
-
     function parseISODuration(durationString) { 
         if (!durationString) return 0; const regex = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/; const matches = durationString.match(regex); if (!matches) return 0; const hours = parseInt(matches[1] || 0, 10); const minutes = parseInt(matches[2] || 0, 10); const seconds = parseInt(matches[3] || 0, 10); return (hours * 3600) + (minutes * 60) + seconds;
     }
-    
     function formatFullDate(date, timezone) { 
         const tz = (timezone === 'local') ? undefined : timezone; const h = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz, hour12: false }).format(date); const wd_long = new Intl.DateTimeFormat('vi-VN', { weekday: 'long', timeZone: tz }).format(date); const d = new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }).format(date); const finalTime = h.startsWith("24:") ? h.replace("24:", "00:") : h; return `${finalTime}, ${wd_long}, ${d}`;
     }
+    // ----------------------------------------
 
     async function handleSearch() {
         const url = urlInput.value.trim();
@@ -170,17 +219,16 @@ function initChannelAnalyzer() {
         showStatus('Đang tìm kiếm Channel ID...');
 
         try {
-            // TẤT CẢ CÁC LỆNH GỌI API GIỜ ĐÂY SẼ TRỎ VỀ /api/channel-analyzer
-            const channelId = await getChannelId(url);
+            const channelId = await getChannelId_backend(url);
             if (!channelId) return;
             
             showStatus('Đã tìm thấy kênh! Đang lấy danh sách video... (có thể mất vài phút)');
             const uploadsPlaylistId = channelId.replace('UC', 'UU');
-            const videos = await getVideosFromPlaylist(uploadsPlaylistId);
+            const videos = await getVideosFromPlaylist_backend(uploadsPlaylistId);
             if (videos.length === 0) { showError('Kênh này không có video công khai nào.'); hideStatus(); return; }
             
             showStatus(`Đã tải ${videos.length} video. Đang lấy lượt xem và từ khóa...`);
-            const videoDetailsMap = await getVideoDetails(videos);
+            const videoDetailsMap = await getVideoDetails_backend(videos);
 
             allFetchedVideos = videos.map(video => {
                 const videoId = video.snippet.resourceId.videoId;
@@ -191,20 +239,28 @@ function initChannelAnalyzer() {
                 const seconds = parseISODuration(duration);
                 if (liveContent === 'live' || liveContent === 'upcoming') videoType = 'live';
                 else if (seconds > 0 && seconds <= 60) videoType = 'short';
-                return { ...video, viewCount: parseInt(details.viewCount || 0, 10), tags: details.tags, videoType: videoType, publishedDate: new Date(video.snippet.publishedAt) };
+                
+                return {
+                    id: videoId, 
+                    snippet: video.snippet,
+                    publishedDate: new Date(video.snippet.publishedAt),
+                    viewCount: parseInt(details.viewCount || 0, 10), 
+                    tags: details.tags, 
+                    videoType: videoType
+                };
             });
 
             populateYearOptions(allFetchedVideos); 
-            updateDashboard(); // Gọi hàm cập nhật trung tâm
+            updateDashboard(); 
             
             filterContainerWrapper.classList.remove('hidden');
-            analysisButtonContainer.classList.remove('hidden');
+            analysisButtonContainer.classList.remove('hidden'); // Hiện 2 nút tab
             hideStatus();
         } catch (error) { console.error('Lỗi trong handleSearch:', error); showError(`Đã xảy ra lỗi: ${error.message}. Kiểm tra Console (F12).`); hideStatus(); }
     }
 
     // [BACKEND] GỌI /api/channel-analyzer
-    async function getChannelId(url) {
+    async function getChannelId_backend(url) {
         showStatus('Đang phân giải URL tùy chỉnh...');
         try {
             const response = await fetch('/api/channel-analyzer', {
@@ -216,7 +272,7 @@ function initChannelAnalyzer() {
             if (!response.ok) {
                 throw new Error(data.message || 'Lỗi không xác định từ backend');
             }
-            return data.channelId; // Backend trả về channelId
+            return data.channelId; 
         } catch (error) {
             console.error('Lỗi tìm Channel ID:', error);
             showError(`Lỗi khi phân giải URL: ${error.message}`);
@@ -226,7 +282,7 @@ function initChannelAnalyzer() {
     }
     
     // [BACKEND] GỌI /api/channel-analyzer
-    async function getVideosFromPlaylist(playlistId) {
+    async function getVideosFromPlaylist_backend(playlistId) {
         let allVideos = [];
         let nextPageToken = null;
         let page = 1;
@@ -262,11 +318,10 @@ function initChannelAnalyzer() {
     }
 
     // [BACKEND] GỌI /api/channel-analyzer
-    async function getVideoDetails(playlistItems) {
+    async function getVideoDetails_backend(playlistItems) {
         const detailsMap = new Map();
         const videoIds = playlistItems.map(item => item.snippet.resourceId.videoId);
         
-        // Chia thành các lô 50
         for (let i = 0; i < videoIds.length; i += 50) {
             const idBatch = videoIds.slice(i, i + 50);
             
@@ -285,7 +340,7 @@ function initChannelAnalyzer() {
                     throw new Error(errorData.message || `Lỗi API khi lấy chi tiết video.`);
                 }
                 
-                const data = await response.json(); // data này là { items: [...] }
+                const data = await response.json(); 
                 
                 if (data.items) {
                     data.items.forEach(video => {
@@ -327,9 +382,6 @@ function initChannelAnalyzer() {
         displayVideos(videosToDisplay);
     }
 
-    /**
-     * Sửa đổi hàm displayVideos
-     */
     function displayVideos(videos) {
         resultsContainer.innerHTML = '';
         if (videos.length === 0) { resultsContainer.innerHTML = '<p class="text-gray-500 col-span-full text-center">Không tìm thấy video nào phù hợp.</p>'; return; }
@@ -337,7 +389,7 @@ function initChannelAnalyzer() {
         const selectedTz = timezoneFilter.value; 
 
         videos.forEach(video => {
-            const videoId = video.snippet.resourceId.videoId;
+            const videoId = video.id; 
             const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
             const title = video.snippet.title;
             const thumbnailUrl = video.snippet.thumbnails.medium ? video.snippet.thumbnails.medium.url : 'https://placehold.co/320x180';
@@ -361,6 +413,10 @@ function initChannelAnalyzer() {
                 copyTagsButtonHtml = `<button class="copy-tags-btn text-xs px-2.5 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300" data-tags="${tags.join(', ')}">Copy Từ khóa</button>`; 
             }
             
+            const isSaved = savedVideos.some(v => v.id === videoId);
+            const saveBtnText = isSaved ? '✓ Đã Lưu' : '➕ Lưu Video';
+            const saveBtnDisabled = isSaved ? 'disabled' : '';
+
             const card = document.createElement('div');
             card.className = 'bg-white rounded-lg shadow-md overflow-hidden flex flex-col transition-all duration-300 hover:shadow-xl';
             card.innerHTML = `
@@ -369,7 +425,7 @@ function initChannelAnalyzer() {
                 </div>
                 <div class="p-4 flex-grow flex flex-col">
                     <h3 class="text-base font-semibold text-gray-800 leading-snug mb-2 h-16 overflow-hidden">
-                        <a href="${videoUrl}" target="_blank" class="hover:text-blue-600 line-clamp-2">${title}</a>
+                        <a href="${videoUrl}" target="_blank" class="hover:text-[var(--primary-blue-light)] line-clamp-2">${title}</a>
                     </h3>
                     <div class="text-sm text-gray-500 mt-auto">
                         <p class="mb-1">Thời gian đăng: ${formattedDate}</p>
@@ -381,6 +437,9 @@ function initChannelAnalyzer() {
                             Copy Link
                         </button>
                         ${copyTagsButtonHtml}
+                        <button class="save-video-btn" data-video-id="${videoId}" ${saveBtnDisabled}>
+                            ${saveBtnText}
+                        </button>
                     </div>
                 </div>`;
             resultsContainer.appendChild(card);
@@ -394,35 +453,50 @@ function initChannelAnalyzer() {
         renderVideoList(getFilteredVideos());
     }
     
-    function toggleAnalysis() {
-        isAnalysisActive = !isAnalysisActive;
+    // --- CÁC HÀM PHÂN TÍCH (SỬA LẠI) ---
+    
+    // Nút "Phân tích Kênh (Kênh Hiện Tại)"
+    function handleAnalyzeChannel() {
+        analysisResults.classList.remove('hidden');
+        setActiveTab('channel'); // [ĐÃ SỬA]
         
-        if (isAnalysisActive) {
-            analysisResults.classList.remove('hidden');
-            analysisButton.textContent = 'Ẩn Phân tích';
-            analysisButton.classList.replace('bg-purple-600', 'bg-gray-500');
-            updateDashboard(); // Chỉ cần gọi updateDashboard
-        } else {
-            analysisResults.classList.add('hidden');
-            analysisButton.textContent = '📊 Phân tích Kênh';
-            analysisButton.classList.replace('bg-gray-500', 'bg-purple-600');
-            
-            // Reset bộ lọc phụ
-            activeHourFilter = null;
-            activeDayFilter = null;
-            updateDashboard(); // Gọi updateDashboard để render lại list
-        }
+        const mainFilteredVideos = getFilteredVideos();
+        const selectedTz = (timezoneFilter.value === 'local') ? undefined : timezoneFilter.value;
+        const videosForHourChart = mainFilteredVideos.filter(v => !activeDayFilter || videoMatchesDay(v, activeDayFilter, selectedTz));
+        const videosForDayChart = mainFilteredVideos.filter(v => !activeHourFilter || videoMatchesHour(v, activeHourFilter, selectedTz));
+        const videosForListAndGap = mainFilteredVideos.filter(v => 
+            (!activeDayFilter || videoMatchesDay(v, activeDayFilter, selectedTz)) &&
+            (!activeHourFilter || videoMatchesHour(v, activeHourFilter, selectedTz))
+        );
+        
+        runAnalysis(videosForHourChart, videosForDayChart, videosForListAndGap, false); // false = không phải giỏ hàng
+    }
+
+    // Nút "Ẩn Phân Tích" (MỚI)
+    function hideAnalysis() {
+        analysisResults.classList.add('hidden');
+        setActiveTab('none'); // [ĐÃ SỬA]
+        
+        activeHourFilter = null;
+        activeDayFilter = null;
+        updateDashboard(); 
     }
     
-    function runAnalysis(videosForHour, videosForDay, videosForGap) {
+    function runAnalysis(videosForHour, videosForDay, videosForGap, isSavedListAnalysis = false) {
         destroyCharts();
         
         if (analysisTitle) {
             const totalVideosInList = videosForGap.length; 
-            if (yearFilter.value == "0" && videoTypeFilter.value == "all" && viewsFilter.value == "0" && !activeHourFilter && !activeDayFilter) {
+            
+            if (isSavedListAnalysis) {
+                analysisTitle.textContent = `Phân Tích Dựa Trên Giỏ Hàng (${totalVideosInList} video đã lưu)`;
+                analysisTitle.dataset.isSavedListAnalysis = 'true'; 
+            } else if (yearFilter.value == "0" && videoTypeFilter.value == "all" && viewsFilter.value == "0" && !activeHourFilter && !activeDayFilter) {
                 analysisTitle.textContent = `Phân Tích Thói Quen Đăng Video (Toàn bộ ${totalVideosInList} video)`;
+                analysisTitle.dataset.isSavedListAnalysis = 'false'; 
             } else {
                 analysisTitle.textContent = `Phân Tích Dựa Trên Bộ Lọc (${totalVideosInList} video phù hợp)`;
+                analysisTitle.dataset.isSavedListAnalysis = 'false'; 
             }
         }
 
@@ -456,22 +530,20 @@ function initChannelAnalyzer() {
             else if (diffDays === 1) gapData["1 ngày"]++; else if (diffDays === 2) gapData["2 ngày"]++; else if (diffDays === 3) gapData["3 ngày"]++; else if (diffDays === 4) gapData["4 ngày"]++; else if (diffDays === 5) gapData["5 ngày"]++; else if (diffDays === 6) gapData["6 ngày"]++; else if (diffDays === 7) gapData["7 ngày (1 Tuần)"]++; else if (diffDays >= 8 && diffDays <= 14) gapData["8-14 ngày"]++; else if (diffDays >= 15 && diffDays <= 29) gapData["15-29 ngày"]++; else if (diffDays >= 30) gapData["30+ ngày (1 Tháng+)"]++;
         }
 
-        // Lấy và lưu trữ Top 3
         const hourSorted = getSortedData(hourData);
         const daySorted = getSortedData(dayOfWeekData);
         const gapSorted = getSortedData(gapData);
 
-        // Vẽ biểu đồ
         const hourMeaning = getAnalysisMeaning(hourData, videosForHour.length, 'khung giờ');
-        const hourRec = getAnalysisRecommendation(hourSorted, videosForHour.length, 'khung giờ', 'setHourFilter', activeHourFilter);
+        const hourRec = getAnalysisRecommendation(hourSorted, videosForHour.length, 'khung giờ', 'setHourFilter', activeHourFilter, isSavedListAnalysis);
         createBarChart('analyzer-chartHour', hourData, hourMeaning, hourRec, CHART_COLORS.blue);
         
         const dayOfWeekMeaning = getAnalysisMeaning(dayOfWeekData, videosForDay.length, 'ngày');
-        const dayOfWeekRec = getAnalysisRecommendation(daySorted, videosForDay.length, 'ngày', 'setDayFilter', activeDayFilter);
+        const dayOfWeekRec = getAnalysisRecommendation(daySorted, videosForDay.length, 'ngày', 'setDayFilter', activeDayFilter, isSavedListAnalysis);
         createBarChart('analyzer-chartDayOfWeek', dayOfWeekData, dayOfWeekMeaning, dayOfWeekRec, CHART_COLORS.green);
 
         const gapMeaning = getAnalysisMeaning(gapData, totalGaps, 'nhịp độ');
-        const gapRec = getAnalysisRecommendation(gapSorted, totalGaps, 'nhịp độ'); // Không cần lọc nhịp độ
+        const gapRec = getAnalysisRecommendation(gapSorted, totalGaps, 'nhịp độ', '', null, isSavedListAnalysis);
         createBarChart('analyzer-chartDayOfMonth', gapData, gapMeaning, gapRec, CHART_COLORS.yellow);
     }
     
@@ -486,18 +558,15 @@ function initChannelAnalyzer() {
         if (total <= 0) return '<p>Không có dữ liệu cho mục này.</p>'; let maxKey = ''; let maxVal = -1; for (const [key, value] of Object.entries(data)) { if (value > maxVal) { maxVal = value; maxKey = key; } } if (maxVal <= 0) return `<p>Không có dữ liệu cho mục này.</p>`; const percentage = ((maxVal / total) * 100).toFixed(1); return `<p>Phân tích cho thấy <strong>${maxKey}</strong> là ${unit} phổ biến nhất, với <strong>${maxVal} lần</strong> (chiếm ${percentage}%).</p>`;
     }
     
-    function getAnalysisRecommendation(sortedData, total, unit, filterFunction = '', activeFilter = null) {
+    function getAnalysisRecommendation(sortedData, total, unit, filterFunction = '', activeFilter = null, isSavedListAnalysis = false) {
         if (total <= 0) { return '<h4 class="font-semibold text-gray-800 mb-2">Đề xuất Top 3:</h4><p class="text-sm">Không có đề xuất nào.</p>'; }
         if (sortedData.length === 0) { return '<h4 class="font-semibold text-gray-800 mb-2">Đề xuất Top 3:</h4><p class="text-sm">Không có đề xuất nào.</p>'; }
         
-        // Tạo Nút Reset/Lọc
         let resetButton = '';
-        if (filterFunction) { // Chỉ áp dụng cho Giờ và Ngày
+        if (filterFunction && !isSavedListAnalysis) { 
             if (activeFilter) {
-                // Nếu đang lọc, hiển thị nút "Xóa lọc"
                 resetButton = `<button onclick="${filterFunction}(null)" class="text-xs font-medium text-blue-600 hover:underline">[Xóa lọc]</button>`;
             } else {
-                // Nếu chưa lọc, hiển thị văn bản mờ theo yêu cầu
                 const buttonText = (unit === 'khung giờ') ? 'Lọc thời gian' : 'Lọc ngày';
                 resetButton = `<span class="text-xs font-medium text-gray-400">${buttonText}</span>`;
             }
@@ -509,16 +578,13 @@ function initChannelAnalyzer() {
         
         top3.forEach((item, index) => { 
             const percentage = ((item.value / total) * 100).toFixed(1);
-            
             let itemClass = "flex justify-between items-center text-sm p-1 rounded-md transition-all";
             let onclick = '';
             
-            if (filterFunction) { // Nếu đây là một bộ lọc có thể click
+            if (filterFunction && !isSavedListAnalysis) { 
                 if (item.key === activeFilter) {
-                    // Mục này đang được chọn
                     itemClass += " bg-blue-100 text-blue-700 font-bold";
                 } else {
-                    // Mục này có thể click
                     itemClass += " cursor-pointer hover:bg-gray-100";
                     onclick = `onclick="${filterFunction}('${item.key}')"`;
                 }
@@ -575,20 +641,138 @@ function initChannelAnalyzer() {
 
     // === CÁC HÀM TIỆN ÍCH (Copy, Thông báo, Dọn dẹp) ===
     
-    function handleCopyClick(event) { 
-        // Dùng hàm copyToClipboard từ utils.js
+    function handleCardClick(event) {
         let textToCopy = null; 
+        let buttonElement = null;
+
         if (event.target.classList.contains('copy-link-btn')) { 
             textToCopy = event.target.dataset.link; 
+            buttonElement = event.target;
         } 
-        if (event.target.classList.contains('copy-tags-btn')) { 
+        else if (event.target.classList.contains('copy-tags-btn')) { 
             textToCopy = event.target.dataset.tags; 
+            buttonElement = event.target;
         } 
-        if (textToCopy) {
-             window.copyToClipboard(textToCopy, event.target);
+        else if (event.target.classList.contains('save-video-btn')) {
+            handleSaveVideoClick(event.target);
+            return; 
+        }
+        
+        if (textToCopy && buttonElement) {
+             window.copyToClipboard(textToCopy, buttonElement);
              showCopySuccess();
         }
     }
+
+    // --- CÁC HÀM MỚI CHO "GIỎ VIDEO" ---
+
+    function handleSaveVideoClick(saveButton) {
+        const videoId = saveButton.dataset.videoId;
+        
+        const isAlreadySaved = savedVideos.some(v => v.id === videoId);
+        if (isAlreadySaved) return;
+
+        const videoToSave = allFetchedVideos.find(v => v.id === videoId);
+        if (!videoToSave) {
+            console.error("Không tìm thấy video để lưu?", videoId);
+            return;
+        }
+
+        savedVideos.push(videoToSave);
+
+        saveButton.textContent = '✓ Đã Lưu';
+        saveButton.disabled = true;
+        updateSavedListBar();
+    }
+
+    // [ĐÃ SỬA]
+    function updateSavedListBar() {
+        const count = savedVideos.length;
+        if (savedCountSpan) {
+            savedCountSpan.textContent = count; 
+        }
+    }
+
+    function showSavedListModal() {
+        modalBody.innerHTML = ''; 
+        const count = savedVideos.length;
+        modalTitle.textContent = `Giỏ Video Đã Lưu (${count} video)`;
+
+        if (count === 0) {
+            modalBody.innerHTML = '<p class="text-gray-500 text-center">Bạn chưa lưu video nào.</p>';
+        } else {
+            savedVideos.forEach(video => {
+                const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+                const thumbnailUrl = video.snippet.thumbnails.medium ? video.snippet.thumbnails.medium.url : 'https://placehold.co/320x180';
+                
+                const itemEl = document.createElement('div');
+                itemEl.className = 'modal-list-item';
+                itemEl.innerHTML = `
+                    <img src="${thumbnailUrl}" alt="${video.snippet.title}" class="modal-list-img">
+                    <div class="modal-list-title">
+                        <a href="${videoUrl}" target="_blank" class="hover:text-[var(--primary-blue-light)] font-medium">${video.snippet.title}</a>
+                        <p class="text-xs text-gray-500">${video.snippet.channelTitle}</p>
+                    </div>
+                    <button class="modal-list-remove-btn" data-video-id="${video.id}">Xóa</button>
+                `;
+                modalBody.appendChild(itemEl);
+            });
+        }
+        
+        savedListModal.classList.remove('hidden');
+    }
+    
+    function hideSavedListModal() {
+        savedListModal.classList.add('hidden');
+    }
+
+    function handleRemoveFromSaved(event) {
+        if (!event.target.classList.contains('modal-list-remove-btn')) return;
+        
+        const videoId = event.target.dataset.videoId;
+        
+        savedVideos = savedVideos.filter(v => v.id !== videoId);
+        showSavedListModal();
+        updateSavedListBar();
+
+        const correspondingSaveBtn = resultsContainer.querySelector(`.save-video-btn[data-video-id="${videoId}"]`);
+        if (correspondingSaveBtn) {
+            correspondingSaveBtn.textContent = '➕ Lưu Video';
+            correspondingSaveBtn.disabled = false;
+        }
+    }
+
+    function handleClearSavedList() {
+        if (savedVideos.length === 0) return;
+        
+        if (confirm(`Bạn có chắc muốn xóa tất cả ${savedVideos.length} video đã lưu?`)) {
+            savedVideos = [];
+            showSavedListModal(); 
+            updateSavedListBar(); 
+            
+            resultsContainer.querySelectorAll('.save-video-btn:disabled').forEach(btn => {
+                btn.textContent = '➕ Lưu Video';
+                btn.disabled = false;
+            });
+        }
+    }
+
+    // Nút "Phân Tích Toàn Bộ Giỏ Hàng"
+    function handleAnalyzeSavedList() {
+        if (savedVideos.length === 0) {
+            alert("Bạn chưa có video nào trong giỏ hàng để phân tích.");
+            return;
+        }
+
+        hideSavedListModal();
+        runAnalysis(savedVideos, savedVideos, savedVideos, true); // true = cờ phân tích giỏ hàng
+        analysisResults.classList.remove('hidden');
+        setActiveTab('cart'); // [ĐÃ SỬA]
+        
+        analysisResults.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ------------------------------------
     
     function showStatus(message) { 
         statusText.textContent = message; statusContainer.classList.remove('hidden');
@@ -625,9 +809,12 @@ function initChannelAnalyzer() {
         filterContainerWrapper.classList.add('hidden');
         analysisButtonContainer.classList.add('hidden');
         analysisResults.classList.add('hidden');
-        analysisButton.textContent = '📊 Phân tích Kênh';
-        analysisButton.classList.replace('bg-gray-500', 'bg-purple-600');
-        if (analysisTitle) { analysisTitle.textContent = 'Phân Tích Thói Quen Đăng Video'; }
+        setActiveTab('none'); // [ĐÃ SỬA]
+        
+        if (analysisTitle) { 
+            analysisTitle.textContent = 'Phân Tích Thói Quen Đăng Video'; 
+            analysisTitle.dataset.isSavedListAnalysis = 'false'; 
+        }
         destroyCharts();
         
         while (yearFilter.options.length > 1) {
@@ -648,10 +835,9 @@ function initChannelAnalyzer() {
         toggleKeywordsButton.classList.replace('bg-red-600', 'bg-green-600');
         allFetchedVideos = [];
 
-        isAnalysisActive = false;
         activeHourFilter = null;
         activeDayFilter = null;
+        
+        updateSavedListBar();
     }
 }
-
-// test change

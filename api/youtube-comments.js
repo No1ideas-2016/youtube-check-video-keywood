@@ -1,62 +1,38 @@
-// api/youtube-comments.js
-// "Người gác cổng" (backend) để lấy comment YouTube một cách an toàn
-// PHIÊN BẢN ĐƠN GIẢN: Luôn luôn lấy comment "Nổi bật nhất" (relevance)
+// File: api/utils/youtube-comments.js
 
-export default async function handler(request, response) {
-    // Chỉ chấp nhận phương thức POST
-    if (request.method !== 'POST') {
-        return response.status(405).json({ message: 'Method Not Allowed' });
+/**
+ * Hàm hỗ trợ lấy bình luận (từng trang) từ một video YouTube
+ */
+import { getYoutubeApiKey } from './apiConfig.js';
+import fetch from 'node-fetch';
+
+const YOUTUBE_API_URL = 'https://www.googleapis.com/youtube/v3';
+const API_KEY = getYoutubeApiKey();
+
+export async function fetchVideoComments(videoId, pageToken = null, order = 'relevance') {
+    let url = `${YOUTUBE_API_URL}/commentThreads?key=${API_KEY}&videoId=${videoId}&part=snippet,replies&maxResults=50&order=${order}`;
+    
+    if (pageToken) {
+        url += `&pageToken=${pageToken}`;
     }
 
-    try {
-        // Chỉ cần videoId và pageToken, vì 'order' đã được mặc định
-        const { videoId, pageToken } = request.body; 
-        
-        if (!videoId) {
-            return response.status(400).json({ message: 'Missing videoId' });
-        }
+    const response = await fetch(url);
+    const data = await response.json();
 
-        // Lấy API Key từ BIẾN MÔI TRƯỜNG (an toàn)
-        const YOUTUBE_API_KEY = process.env.MY_YOUTUBE_API_KEY;
-        if (!YOUTUBE_API_KEY) {
-            throw new Error("API Key của YouTube chưa được cấu hình trên server.");
+    if (!response.ok || data.error) {
+        let errorMessage = 'Lỗi API YouTube không xác định.';
+        if (data.error) {
+            errorMessage = data.error.errors[0]?.reason || data.error.message || errorMessage;
         }
-        
-        // --- LOGIC MỚI: LUÔN LUÔN DÙNG 'relevance' ---
-        // Chúng ta không cần đọc 'order' từ body nữa
-        const apiOrder = 'relevance';
-
-        // Tạo URL API
-        let apiUrl = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${encodeURIComponent(videoId)}&key=${YOUTUBE_API_KEY}&maxResults=100&textFormat=plainText&order=${apiOrder}`;
-        
-        if (pageToken) {
-            apiUrl += `&pageToken=${encodeURIComponent(pageToken)}`;
-        }
-
-        // Gọi API YouTube
-        const ytResponse = await fetch(apiUrl);
-        if (!ytResponse.ok) {
-            const errorData = await ytResponse.json();
-            console.error('YouTube API Error:', errorData);
-            throw new Error(errorData.error.message || `Lỗi YouTube API: ${ytResponse.status}`);
-        }
-        
-        const data = await ytResponse.json();
-        
-        // --- LOGIC (Lấy tổng số comment) ---
-        // Chỉ thêm thông tin này vào lần gọi đầu tiên (khi không có pageToken)
-        let responsePayload = { ...data };
-        if (!pageToken && data.pageInfo && data.pageInfo.totalResults) {
-            // Gửi tổng số comment cấp 1 về cho frontend
-            responsePayload.videoTotalComments = data.pageInfo.totalResults;
-        }
-        
-        // Trả dữ liệu về cho frontend
-        return response.status(200).json(responsePayload);
-
-    } catch (error) {
-        console.error('Lỗi trong /api/youtube-comments:', error);
-        return response.status(500).json({ message: error.message || 'Lỗi không xác định' });
+        throw new Error(`Lỗi YouTube API: ${errorMessage}`);
     }
+    
+    // Thêm tổng số comment nếu có
+    const totalResults = data.pageInfo?.totalResults || null;
+
+    return {
+        items: data.items,
+        nextPageToken: data.nextPageToken || null,
+        videoTotalComments: totalResults
+    };
 }
-
